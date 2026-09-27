@@ -81,9 +81,10 @@ const url = `http://127.0.0.1:${port}/?token=e2etest`;
 // --- GUI: new session + prompt ----------------------------------------------
 const browser = await pw.firefox.launch({ executablePath: "/root/.cache/camoufox/camoufox-bin", headless: true });
 const page = await browser.newPage();
-await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
+await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+await page.waitForTimeout(2000); // /plugins/events SSE 长连接使 networkidle 永不触发
 await page.waitForTimeout(2000);
-const baseline = new Set(listSessionFiles()); // BEFORE the click: "New session" creates the blank session file
+// 注：不再做 baseline 差集——以 MARKER 定位会话（见下方轮询）
 await page.locator('button[aria-label="New session"]').first().click();
 await page.waitForTimeout(2500);
 const composer = page.locator('[contenteditable="true"]').first();
@@ -95,9 +96,10 @@ console.log("prompt sent, waiting for the turn…");
 // --- poll for my session and turn completion --------------------------------
 let sessionFile = null;
 const deadline = Date.now() + 420000;
+// GUI 可能在页面加载时（而非点击 New session 时）就建好空白会话并复用它，
+// 文件新旧不可靠——以 marker 唯一性定位本轮会话。
 while (Date.now() < deadline && sessionFile === null) {
   for (const f of listSessionFiles()) {
-    if (baseline.has(f)) continue;
     const log = await readLog(f);
     if (log && log.includes(MARKER)) { sessionFile = f; break; }
   }
