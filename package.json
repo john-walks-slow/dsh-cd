@@ -1,0 +1,49 @@
+{
+  "name": "dsh-cd",
+  "version": "0.1.0",
+  "description": "Session working-directory override for DeepSeek Harness: a `cd` tool that makes relative paths in the file tools and the bash tool's default workdir follow the new directory, per-session and cache-safe, without moving the session or its workspace root.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cd",
+    "working-directory",
+    "cwd"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-home-paths": "0.1.5-rc.3",
+    "@deepseek-ai/dsh-tools": "0.1.5-rc.3"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh-agent": "0.1.5-rc.3",
+    "@deepseek-ai/dsh-llm": "0.1.5-rc.3",
+    "@types/node": "^22.20.1",
+    "typescript": "^5.9.3"
+  }
+}
