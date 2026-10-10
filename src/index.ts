@@ -22,7 +22,7 @@ import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { Context } from "@deepseek-ai/cordis";
 import { expandHomePath, resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 import { mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 
 export const inject = ["tools", "agents"];
 
@@ -163,15 +163,26 @@ function sessionCwdOf(agent: Agent | undefined): string | undefined {
   return agent?.session?.header?.cwd;
 }
 
+/** The workspace-relative form of `target` when it sits inside `root` (`undefined` for the root itself or anything outside it). */
+function workspaceRelative(root: string, target: string): string | undefined {
+  const rel = relative(root, target);
+  return rel === "" || rel.startsWith("..") || isAbsolute(rel) ? undefined : rel;
+}
+
 function contextTextFor(state: CdState, sessionId: string, agent: Agent | undefined): string {
   const entry = state.live.get(sessionId);
   if (entry === undefined) return "";
   const root = sessionCwdOf(agent);
+  const insideRoot = root === undefined ? undefined : workspaceRelative(root, entry.cwd);
   return (
     `[dsh-cd] Working-directory override active for this session: ${entry.cwd}. ` +
-    "Relative paths in read/write/edit/glob/grep/read_image/present and the bash tool's default workdir resolve against it. " +
-    (root === undefined ? "" : `The session workspace root (${root}) still anchors sandbox policy, project instructions (AGENTS.md), skills, and session storage. `) +
-    "Other tools need absolute paths."
+    "Relative paths in read/write/edit/glob/grep/read_image/present and the bash tool's default workdir resolve against it; other tools need absolute paths. " +
+    "Markdown links, images, and file mentions in your visible reply use a different base: they resolve against the session workspace root" +
+    (root === undefined ? "" : ` (${root})`) +
+    ", so write them workspace-relative" +
+    (insideRoot === undefined ? "" : ` (a file at ${entry.cwd}/report.md is written "${insideRoot}/report.md")`) +
+    " or absolute — reply paths written relative to the override will not open. " +
+    (root === undefined ? "" : `The session workspace root still anchors sandbox policy, project instructions (AGENTS.md), skills, and session storage.`)
   );
 }
 
@@ -180,7 +191,7 @@ function cdToolDefinition(state: CdState): ToolDefinition {
   return defineTool({
     name: "cd",
     description:
-      "Change this session's working directory in place. After a successful cd, relative paths passed to the file tools (read, write, edit, glob, grep, read_image, present) and the bash tool's default workdir resolve against the new directory instead of the session workspace root. Does NOT move the session or change its workspace root: sandbox policy, project instructions (AGENTS.md), and skills stay anchored to the session workspace. path may be absolute, relative to the current working directory, or start with ~; '-' switches back to the previous directory; omit it to show the current working directory.",
+      "Change this session's working directory in place. After a successful cd, relative paths passed to the file tools (read, write, edit, glob, grep, read_image, present) and the bash tool's default workdir resolve against the new directory instead of the session workspace root. Paths you write in your visible reply (markdown links/images, file mentions) still resolve against the session workspace root, so keep those workspace-relative or absolute. Does NOT move the session or change its workspace root: sandbox policy, project instructions (AGENTS.md), and skills stay anchored to the session workspace. path may be absolute, relative to the current working directory, or start with ~; '-' switches back to the previous directory; omit it to show the current working directory.",
     parameters: CD_PARAMETERS,
     output: { schema: CWD_VIEW_SCHEMA, render: renderValue },
     presentCall(args: unknown): ToolCallView | undefined {
