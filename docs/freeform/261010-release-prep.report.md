@@ -1,6 +1,6 @@
 # dsh-cd 发布准备报告（261010）
 
-执行者：主会话 · 日期：2026-10-10 · 范围：本轮只做「发布准备」——未建 GitHub 仓库、未 npm 发布、未改线上 profile。
+执行者：主会话 · 日期：2026-10-10 · 范围：发布准备 + 上线执行。结果：GitHub 公开仓库已建并 push（含 `v0.1.0` tag），npm `dsh-cd@0.1.0` 已发布；未改线上 profile、未重启 dsh（用户指示暂不重启）。
 
 ## 一、隐私/密钥扫描
 
@@ -56,10 +56,11 @@
 
 profile 里 `@deepseek-ai/dsh-tools` 已是 `0.2.0-rc.2`。原 `dependencies: 0.1.5-rc.3` 会让 pnpm 在 profile 内再装一份**框架包副本**（两套 dsh-tools 实例）。改为 peerDependencies（范围含显式预发布分支，符合 awesome contributing 的 node-semver 警告）后由宿主单一供给；`devDependencies` 钉基线仅用于本地类型检查与构建。awesome contributing 明文推荐官方 `@deepseek-ai/*` 用 peerDependencies。
 
-## 五、后续动作（待用户确认）
+## 五、上线结果（已执行）
 
-1. 建 GitHub 公开仓库 `john-walks-slow/dsh-cd` → push（含 `--follow-tags` 前先有 tag）→ `gh repo edit --add-topic dsh-plugin`（可加 deepseek-harness、cordis、cd、working-directory）
-2. npm 指纹发布：`npm run release` 或直接 `npm pack --pack-destination /tmp` + `publish-webauthn.cjs`（0.1.0 首发；`repository` 已指回仓库）
-3. **2026-10-11 起**提 awesome PR：`data/plugins/john-walks-slow__dsh-cd.yml`（内容即 `docs/freeform/261010-awesome-entry-draft.yml`）
-4. 未做 `screenshots.json`：本插件是上下文注入类，无可视产物，市场会自动从 README 抽图（README 内无图，故详情页无截图；如后续要，可补一张「模型看到什么」的 GUI 实拍）
-5. 与本轮无关但未决：线上 dsh 需重启才会加载 `df265f1` 的 `cd` 文案修复（宿主插件在启动时加载 dist）
+- **GitHub**：`gh repo create` 建公开仓库 <https://github.com/john-walks-slow/dsh-cd>，push `master` + 注解 tag `v0.1.0`；topics：`dsh-plugin`、`deepseek-harness`、`cordis`、`cd`、`working-directory`
+- **npm**：`publish-webauthn.cjs` 指纹发布返回 `PUBLISHED_OK`；`npm view dsh-cd@0.1.0` 可查，`dist-tags.latest = 0.1.0`，`repository.url` 正确回指仓库
+  - 新包名走 npm staged publishing，registry 里额外留下一个公开的 `0.0.0-stage` 占位版（npm 官方行为，`latest` 不受影响，未做删除处理）
+- **待办**：2026-10-11 起提 awesome PR —— `data/plugins/john-walks-slow__dsh-cd.yml`，内容即本目录 `261010-awesome-entry-draft.yml`
+- **未做**：`screenshots.json`（上下文注入类无可视产物，市场自动从 README 抽图，README 内无图）
+- **未做**：线上 dsh 未重启（用户指示），`df265f1` 的 `cd` 回答路径文案修复要等下次重启才生效
