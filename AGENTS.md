@@ -9,12 +9,16 @@
 - 系统提示注入走 `systemPrompt.context` 快照（order 112），仅覆盖激活时输出文本。
 - `agent/created` 监听器内任何抛错会否决 agent 发布——插件内全部 try/catch 包裹。
 - defineTool 的 output.schema 必须用 `satisfies ValueSchemaSpec`，不能用类型注解（否则 properties 推断成 never）。
+- 框架包（`@deepseek-ai/dsh-tools`、`@deepseek-ai/dsh-home-paths`，即运行时真正 import 的那些）走 **peerDependencies**（范围 `^0.1.5-rc.3 || ^0.2.0-rc.1`），由宿主提供；`devDependencies` 钉宿主当前基线（现为 `0.2.0-rc.2`）供本地类型检查。写进 dependencies 会在 profile 里装出第二份框架包。其余 `@deepseek-ai/*` 都是 type-only import，只放 devDependencies。
+- 随宿主基线升级时：同步 devDependencies 版本 → `npm install`（会自动跑 prepare 构建）→ `npm run check`。0.1.5-rc.3 → 0.2.0-rc.2 的破坏性变更：`agent/created` 监听器必须返回 `Promise<undefined> | undefined`。
 
 ## 常用命令
 
 ```bash
-pnpm check   # tsc --noEmit
-pnpm build   # 构建 dist/
+pnpm check        # tsc --noEmit
+pnpm build        # 构建 dist/
+npm run e2e:cd    # GUI e2e（dsh-e2e 隔离实例）
+npm run release   # check + npm version patch（commit+tag）+ pack 到 /tmp
 ```
 
 e2e：`e2e/cd-tool.mjs`，GUI 驱动（camoufox + playwright-core），按 dsh-e2e skill 起隔离实例后运行。

@@ -1,0 +1,11 @@
+# awesome-dsh-plugin 投稿草稿（data/plugins/john-walks-slow__dsh-cd.yml）
+# 前置：仓库创建满 1 天（2026-10-11 起可提）。流程：fork awesome-dsh-plugin → 只加这一个文件 → PR。
+# 注意：description 含 ": " 必须加引号；描述会被对着代码核，只写实际行为。
+# 搜索机制（dsh-market 实测源码）：索引 name/npm/owner/description(en+zh)/category，
+# 不索引 README 与 npm keywords——双语描述是唯一搜索优化面。
+url: https://github.com/john-walks-slow/dsh-cd
+name: john-walks-slow/dsh-cd
+category: tools
+description:
+  en: 'In-session cd tool for DeepSeek Harness: switch the session working directory in place so relative paths in the file tools (read, write, edit, glob, grep, read_image, present) and the bash/pwsh default workdir resolve to the new directory — per-session, persisted across restarts, and without moving the session, its sandbox root or its workspace root.'
+  zh: '会话内 cd 工具：原地切换工作目录，之后文件工具（read / write / edit / glob / grep / read_image / present）的相对路径与 bash / pwsh 默认工作目录都解析到新目录——按会话隔离、跨重启恢复，且不改变会话身份、沙箱根与工作区根。'

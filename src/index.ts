@@ -378,6 +378,7 @@ export function apply(ctx: Context): () => void {
   disposers.push(
     ctx.on("agent/created", ({ agent }: { agent: Agent }) => {
       registerOne(agent);
+      return undefined;
     })
   );
   for (const existing of ctx.agents.roots()) {

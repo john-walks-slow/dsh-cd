@@ -1,3 +1,6 @@
 node_modules/
 dist/
 .dsh-e2e-home/
+.worktrees/
+.mnemon/
+pnpm-lock.yaml
