@@ -7,7 +7,7 @@
  * model's original relative arguments), and the plugin state file.
  */
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { promisify } from "node:util";
 import pw from "/root/projects/camoufox-mcp/node_modules/playwright-core/index.js";
 
@@ -84,6 +84,15 @@ const page = await browser.newPage();
 await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
 await page.waitForTimeout(2000); // /plugins/events SSE 长连接使 networkidle 永不触发
 await page.waitForTimeout(2000);
+// dsh 0.2：新 profile 会先弹 Preview Notice / API key 弹窗，遮罩会拦掉后续点击
+for (let round = 0; round < 8; round++) {
+  if ((await page.locator('[class*="_mask_"]').count()) === 0) break;
+  for (const name of ["Configure later", "Continue"]) {
+    const button = page.getByRole("button", { name, exact: true });
+    if ((await button.count()) > 0) await button.first().click({ timeout: 5000 }).catch(() => undefined);
+  }
+  await page.waitForTimeout(1200);
+}
 // 注：不再做 baseline 差集——以 MARKER 定位会话（见下方轮询）
 await page.locator('button[aria-label="New session"]').first().click();
 await page.waitForTimeout(2500);
@@ -99,9 +108,16 @@ const deadline = Date.now() + 420000;
 // GUI 可能在页面加载时（而非点击 New session 时）就建好空白会话并复用它，
 // 文件新旧不可靠——以 marker 唯一性定位本轮会话。
 while (Date.now() < deadline && sessionFile === null) {
+  // 历史运行也留下过同样的 marker，取其中最近写入的一份
+  const matches = [];
   for (const f of listSessionFiles()) {
     const log = await readLog(f);
-    if (log && log.includes(MARKER)) { sessionFile = f; break; }
+    if (log && log.includes(MARKER)) matches.push(f);
+  }
+  if (matches.length > 0) {
+    matches.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+    sessionFile = matches[0];
+    break;
   }
   if (sessionFile === null) await new Promise((r) => setTimeout(r, 3000));
 }

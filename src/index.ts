@@ -1,46 +1,49 @@
 /**
- * dsh-cd — session working-directory override for DeepSeek Harness.
+ * dsh-cd — session working-directory control for DeepSeek Harness.
  *
- * Registers a model-facing `cd` tool that switches this session's working
- * directory in place: afterwards every relative path in the filesystem tools
- * (read/write/edit/glob/grep/read_image/present) and the bash tool's default
- * workdir resolve against the new directory. The session's workspace root
- * (sandbox anchor, project instructions, skills, storage location) is NOT
- * moved. The override is per-session, announced through a cache-safe
- * runtime-context snapshot, and persisted across restarts keyed by session id.
+ * Two capabilities, one engine:
  *
- * Mechanism: the harness derives per-call defaults from the frozen session
- * header (`session.header.cwd`) and the `tools/pre-execute` waterfall
- * explicitly cannot rewrite tool arguments, so dsh-cd shadows the affected
- * tools in each agent's own scope (documented registry behavior: scoped
- * registrations shadow inherited definitions) and rewrites only path-like
- * arguments.
+ * - **Path-base override** (default): a model-facing `cd` tool switches the base
+ *   that relative paths resolve against — the file tools
+ *   (read/write/edit/glob/grep/read_image/present) and the bash tool's default
+ *   workdir — without moving the session. Per-session, announced through a
+ *   cache-safe runtime-context snapshot, persisted across restarts.
+ * - **Real workspace switch** (`cd {"workspace": true}`, or the user-facing `/cd`
+ *   command): the session is relocated for good, so its sandbox root, project
+ *   instructions, skill discovery, storage path and sidebar workspace all follow.
+ *
+ * Mechanism: the harness derives per-call defaults from the frozen session header
+ * (`session.header.cwd`) and the `tools/pre-execute` waterfall explicitly cannot
+ * rewrite tool arguments, so dsh-cd shadows the affected tools in each agent's own
+ * scope (documented registry behavior: scoped registrations shadow inherited
+ * definitions) and rewrites only path-like arguments. A real switch additionally
+ * re-pins that identity, which the host offers no API for — see `relocate.ts`.
  */
 import { defineTool, type ParameterSchemaSpec, type ToolCallView, type ToolDefinition, type ValueSchemaSpec } from "@deepseek-ai/dsh-tools";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { Context } from "@deepseek-ai/cordis";
+import type {} from "@deepseek-ai/dsh-session";
 import { expandHomePath, resolveDshHome } from "@deepseek-ai/dsh-home-paths";
-import { mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
+import { realpath, stat } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
+import { registerCdCommand } from "./command.js";
+import { contextTextFor, sessionCwdOf } from "./context.js";
+import { relocateSession, type LiveSession, type RelocateServices } from "./relocate.js";
+import { createCdState, savePersisted, type CdState, type CwdEntry } from "./state.js";
 
 export const inject = ["tools", "agents"];
-
-/** One session's override; `inherited` entries are spawn-time snapshots, never persisted. */
-interface CwdEntry {
-  cwd: string;
-  previous?: string;
-  updatedAt: number;
-  inherited?: true;
-}
-
-const PERSIST_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 const CD_PARAMETERS: ParameterSchemaSpec = {
   path: {
     type: "string",
     description:
       "Target directory: absolute, relative to the current working directory, or starting with ~. '-' switches back to the previous directory. Omit to show the current working directory. Passing the session workspace root clears the override."
+  },
+  workspace: {
+    type: "boolean",
+    description:
+      "Relocate the session to `path` for good instead of only re-basing relative paths: as soon as this turn ends the session belongs to that directory (sandbox root, project instructions, skills, session storage and the sidebar workspace follow, creating the workspace record if the directory has none). Use it when the work is moving there permanently; omit it for a temporary detour."
   }
 };
 
@@ -52,6 +55,7 @@ const CWD_VIEW_SCHEMA = {
     override: { type: "boolean", required: true },
     previous: { type: "string" },
     sessionWorkspaceRoot: { type: "string" },
+    workspaceSwitchQueued: { type: "boolean" },
     note: { type: "string" }
   }
 } satisfies ValueSchemaSpec;
@@ -88,61 +92,6 @@ const REWRITERS: Record<string, ArgsRewriter> = {
       : args
 };
 
-interface CdState {
-  /** Live overrides keyed by session id; entries created here or restored from disk. */
-  readonly live: Map<string, CwdEntry>;
-  /** Persisted overrides keyed by session id (inherited entries excluded). Resolves once the state file loads. */
-  persisted: Map<string, CwdEntry>;
-  readonly ready: Promise<void>;
-  readonly stateFile: string;
-}
-
-async function loadPersisted(stateFile: string): Promise<Map<string, CwdEntry>> {
-  let raw: string;
-  try {
-    raw = await readFile(stateFile, "utf8");
-  } catch {
-    return new Map();
-  }
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    const entries = new Map<string, CwdEntry>();
-    if (parsed !== null && typeof parsed === "object" && Array.isArray((parsed as { entries?: unknown }).entries)) {
-      for (const entry of (parsed as { entries: unknown[] }).entries) {
-        if (entry !== null && typeof entry === "object") {
-          const { sessionId, cwd } = entry as { sessionId?: unknown; cwd?: unknown };
-          if (typeof sessionId === "string" && typeof cwd === "string") {
-            entries.set(sessionId, entry as CwdEntry);
-          }
-        }
-      }
-    }
-    return entries;
-  } catch (error) {
-    console.warn(`dsh-cd: ignoring malformed state file ${stateFile}: ${String(error)}`);
-    return new Map();
-  }
-}
-
-async function savePersisted(state: CdState): Promise<void> {
-  await state.ready;
-  const now = Date.now();
-  const entries: object[] = [];
-  for (const [sessionId, entry] of state.persisted) {
-    if (now - entry.updatedAt > PERSIST_MAX_AGE_MS) continue;
-    entries.push({
-      sessionId,
-      ...(entry.previous === undefined ? {} : { previous: entry.previous }),
-      cwd: entry.cwd,
-      updatedAt: entry.updatedAt
-    });
-  }
-  await mkdir(dirname(state.stateFile), { recursive: true });
-  const tempFile = `${state.stateFile}.tmp`;
-  await writeFile(tempFile, `${JSON.stringify({ entries }, null, 2)}\n`, "utf8");
-  await rename(tempFile, state.stateFile);
-}
-
 /** Resolve one candidate directory to its real path, or undefined when it is not a directory. */
 async function resolveDirectory(target: string): Promise<string | undefined> {
   let real: string;
@@ -159,46 +108,20 @@ async function resolveDirectory(target: string): Promise<string | undefined> {
   return real;
 }
 
-function sessionCwdOf(agent: Agent | undefined): string | undefined {
-  return agent?.session?.header?.cwd;
-}
-
-/** The workspace-relative form of `target` when it sits inside `root` (`undefined` for the root itself or anything outside it). */
-function workspaceRelative(root: string, target: string): string | undefined {
-  const rel = relative(root, target);
-  return rel === "" || rel.startsWith("..") || isAbsolute(rel) ? undefined : rel;
-}
-
-function contextTextFor(state: CdState, sessionId: string, agent: Agent | undefined): string {
-  const entry = state.live.get(sessionId);
-  if (entry === undefined) return "";
-  const root = sessionCwdOf(agent);
-  const insideRoot = root === undefined ? undefined : workspaceRelative(root, entry.cwd);
-  return (
-    `[dsh-cd] Working-directory override active for this session: ${entry.cwd}. ` +
-    "Relative paths in read/write/edit/glob/grep/read_image/present and the bash tool's default workdir resolve against it; other tools need absolute paths. " +
-    "Markdown links, images, and file mentions in your visible reply use a different base: they resolve against the session workspace root" +
-    (root === undefined ? "" : ` (${root})`) +
-    ", so write them workspace-relative" +
-    (insideRoot === undefined ? "" : ` (a file at ${entry.cwd}/report.md is written "${insideRoot}/report.md")`) +
-    " or absolute — reply paths written relative to the override will not open. " +
-    (root === undefined ? "" : `The session workspace root still anchors sandbox policy, project instructions (AGENTS.md), skills, and session storage.`)
-  );
-}
-
 /** The `cd` tool, bound to one state store. */
-function cdToolDefinition(state: CdState): ToolDefinition {
+function cdToolDefinition(state: CdState, services: () => RelocateServices | undefined): ToolDefinition {
   return defineTool({
     name: "cd",
     description:
-      "Change this session's working directory in place. After a successful cd, relative paths passed to the file tools (read, write, edit, glob, grep, read_image, present) and the bash tool's default workdir resolve against the new directory instead of the session workspace root. Paths you write in your visible reply (markdown links/images, file mentions) still resolve against the session workspace root, so keep those workspace-relative or absolute. Does NOT move the session or change its workspace root: sandbox policy, project instructions (AGENTS.md), and skills stay anchored to the session workspace. path may be absolute, relative to the current working directory, or start with ~; '-' switches back to the previous directory; omit it to show the current working directory.",
+      "Change this session's working directory. By default this only re-bases relative paths: the file tools (read, write, edit, glob, grep, read_image, present) and the bash tool's default workdir resolve against `path`, while the session keeps its workspace — sandbox policy, project instructions (AGENTS.md), skills and session storage stay where they were. Pass `workspace: true` when the work is moving there for good: this turn still uses the new directory, and the session is relocated for real as soon as the turn ends, so its sandbox root, project instructions, skills, session storage and sidebar workspace all follow. `path` may be absolute, relative to the current working directory, or start with ~; '-' switches back to the previous directory; omit it to show the current working directory.",
     parameters: CD_PARAMETERS,
     output: { schema: CWD_VIEW_SCHEMA, render: renderValue },
     presentCall(args: unknown): ToolCallView | undefined {
       const path = (args as { path?: unknown } | null | undefined)?.path;
+      const workspace = (args as { workspace?: unknown } | null | undefined)?.workspace === true;
       return {
         card: "generic" as const,
-        title: `cd ${typeof path === "string" ? path : ""}`.trim(),
+        title: `cd ${typeof path === "string" ? path : ""}${workspace ? "  (real workspace switch)" : ""}`.trim(),
         kind: "other" as const,
         rawInput: JSON.stringify(args) ?? ""
       };
@@ -211,14 +134,22 @@ function cdToolDefinition(state: CdState): ToolDefinition {
       const entry = state.live.get(sessionId);
       const root = sessionCwdOf(agent);
       const requested = (args as { path?: unknown }).path;
+      const wantsWorkspace = (args as { workspace?: unknown }).workspace === true;
 
       if (requested === undefined) {
+        const queued = entry?.relocate === true;
         return {
           cwd: entry?.cwd ?? root ?? process.cwd(),
           override: entry !== undefined,
           ...(entry?.previous === undefined ? {} : { previous: entry.previous }),
           ...(root === undefined ? {} : { sessionWorkspaceRoot: root }),
-          ...(entry === undefined ? {} : { note: "Relative paths in file tools and the bash default workdir resolve against the override cwd." })
+          ...(queued ? { workspaceSwitchQueued: true } : {}),
+          note:
+            entry === undefined
+              ? "No override: relative paths resolve against the session workspace root."
+              : `Relative paths in the file tools and the bash default workdir resolve against ${entry.cwd}.` +
+                (queued ? ` A real workspace switch to ${entry.cwd} is queued and runs as soon as this turn ends.` : "") +
+                (entry.relocateError === undefined ? "" : ` The last real workspace switch failed: ${entry.relocateError}`)
         };
       }
       if (typeof requested !== "string" || requested.length === 0) throw new Error("cd: path must be a non-empty string");
@@ -243,23 +174,36 @@ function cdToolDefinition(state: CdState): ToolDefinition {
           cwd: resolved,
           override: false,
           sessionWorkspaceRoot: root,
-          note: "Override cleared: back to the session workspace root."
+          note: "Override cleared: relative paths resolve against the session workspace root again, which is also this session's workspace."
         };
       }
 
+      if (wantsWorkspace && services() === undefined) {
+        throw new Error(
+          "cd: a real workspace switch needs the session persistence and workspace registry services, which this dsh build does not expose; use a plain cd or the /cd command."
+        );
+      }
+
       const previous = entry?.cwd ?? root;
-      const next: CwdEntry = { cwd: resolved, ...(previous === undefined ? {} : { previous }), updatedAt: Date.now() };
+      const next: CwdEntry = {
+        cwd: resolved,
+        ...(previous === undefined ? {} : { previous }),
+        updatedAt: Date.now(),
+        ...(wantsWorkspace ? { relocate: true as const } : {})
+      };
       state.live.set(sessionId, next);
       state.persisted.set(sessionId, next);
       await savePersisted(state);
+
       return {
         cwd: resolved,
         override: true,
         ...(next.previous === undefined ? {} : { previous: next.previous }),
         ...(root === undefined ? {} : { sessionWorkspaceRoot: root }),
-        note:
-          "Relative paths in file tools and the bash default workdir now resolve here. " +
-          "Sandbox policy, project instructions, and skills remain anchored to the session workspace root."
+        ...(wantsWorkspace ? { workspaceSwitchQueued: true } : {}),
+        note: wantsWorkspace
+          ? `Relative paths in the file tools and the bash default workdir now resolve against ${resolved}, and a real workspace switch to it is queued: as soon as this turn ends the session is relocated there for good — its sandbox root, project instructions (AGENTS.md), skill discovery, session storage and sidebar workspace all move with it, and a workspace record is created if that directory has none. Finish anything that depends on the old workspace in this turn; afterwards the override is gone because relative paths and reply paths finally share one base.`
+          : `Relative paths in the file tools and the bash default workdir now resolve against ${resolved}. This session keeps its workspace: sandbox policy, project instructions (AGENTS.md), skills and session storage stay${root === undefined ? "" : ` at ${root}`}, so keep writing reply paths workspace-relative or absolute.`
       };
     }
   });
@@ -336,18 +280,66 @@ async function restoreEntryFor(agent: Agent, state: CdState): Promise<void> {
 
 export function apply(ctx: Context): () => void {
   const stateFile = join(resolveDshHome(undefined, process.env), "dsh-cd", "state.json");
-  const persistedLoad = loadPersisted(stateFile);
-  const state: CdState = {
-    live: new Map(),
-    persisted: new Map(),
-    ready: persistedLoad.then(() => undefined),
-    stateFile
-  };
-  void persistedLoad.then((persisted) => {
-    state.persisted = persisted;
-  });
+  const state = createCdState(stateFile);
+  /** Session ids inside a turn: a real switch rewrites the stored log, so it must never run while one is writing. */
+  const busy = new Set<string>();
 
-  const disposers: (() => void)[] = [ctx.tools.register(cdToolDefinition(state))];
+  const services = (): RelocateServices | undefined => {
+    const persistence = ctx.get("sessionPersistence", false) as RelocateServices["persistence"] | undefined;
+    const registry = ctx.get("workspaceRegistry", false) as RelocateServices["registry"] | undefined;
+    return persistence === undefined || registry === undefined ? undefined : { persistence, registry };
+  };
+
+  const hasLiveChildren = (sessionId: string): boolean => {
+    for (const agent of ctx.agents.list()) {
+      if (agent.session?.header?.parentSession === sessionId) return true;
+    }
+    return false;
+  };
+
+  /**
+   * Apply a queued real workspace switch, if the session is idle. Failures keep
+   * the override (the session still works) and are announced to the model on its
+   * next turn; a busy session or a running subagent simply defers to the next
+   * turn end.
+   */
+  const settleRelocation = async (session: LiveSession): Promise<void> => {
+    const entry = state.live.get(session.id);
+    if (entry?.relocate !== true || busy.has(session.id) || hasLiveChildren(session.id)) return;
+    const host = services();
+    if (host === undefined) {
+      state.live.set(session.id, { ...entry, relocateError: "this dsh build exposes neither the session persistence nor the workspace registry service" });
+      return;
+    }
+    try {
+      const result = await relocateSession(host, session, entry.cwd);
+      state.live.delete(session.id);
+      state.persisted.delete(session.id);
+      await savePersisted(state);
+      ctx.logger.info(`dsh-cd: session ${session.id} relocated to ${result.cwd}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      ctx.logger.warn(`dsh-cd: workspace switch failed for session ${session.id}: ${message}`);
+      state.live.set(session.id, { ...entry, relocateError: message });
+      await savePersisted(state).catch(() => undefined);
+    }
+  };
+
+  const disposers: (() => void)[] = [ctx.tools.register(cdToolDefinition(state, services))];
+
+  disposers.push(
+    ctx.on("session/event", (session: LiveSession, event: { type: string }) => {
+      if (event.type === "turn/start") busy.add(session.id);
+      else if (event.type === "turn/end") {
+        busy.delete(session.id);
+        void settleRelocation(session);
+      }
+    })
+  );
+
+  const disposeCommand = registerCdCommand(ctx, { state, busy, services, logger: ctx.logger });
+  if (disposeCommand === undefined) ctx.logger.warn("dsh-cd: no command service available; /cd is not registered");
+  else disposers.push(disposeCommand);
 
   // Cover every agent (roots and delegated children), once each: the
   // listener handles agents created after plugin load, the initial scan
