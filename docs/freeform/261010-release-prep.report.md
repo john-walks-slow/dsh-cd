@@ -61,6 +61,7 @@ profile 里 `@deepseek-ai/dsh-tools` 已是 `0.2.0-rc.2`。原 `dependencies: 0.
 - **GitHub**：`gh repo create` 建公开仓库 <https://github.com/john-walks-slow/dsh-cd>，push `master` + 注解 tag `v0.1.0`；topics：`dsh-plugin`、`deepseek-harness`、`cordis`、`cd`、`working-directory`
 - **npm**：`publish-webauthn.cjs` 指纹发布返回 `PUBLISHED_OK`；`npm view dsh-cd@0.1.0` 可查，`dist-tags.latest = 0.1.0`，`repository.url` 正确回指仓库
   - 新包名走 npm staged publishing，registry 里额外留下一个公开的 `0.0.0-stage` 占位版（npm 官方行为，`latest` 不受影响，未做删除处理）
-- **待办**：2026-10-11 起提 awesome PR —— `data/plugins/john-walks-slow__dsh-cd.yml`，内容即本目录 `261010-awesome-entry-draft.yml`
+- **awesome PR（2026-10-11 已提）**：<https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/7114> —— fork 的 `main` 停在 9/25，故从 `upstream/main` 开分支，只新增 `data/plugins/john-walks-slow__dsh-cd.yml`（4 个字段，无注释）
+  - 查重修正：仓库实际有 4489 条条目（`gh api` 的目录列举有 1000 条上限，昨天只覆盖了前 1000）；今天用本地全量条目重扫，无任何 `cd` 工具类条目，15 条提及 working directory/cwd 的均已在昨日核对（最近邻仍是 `AngelosZou/dsh-multi-folder`，机制不同）
 - **未做**：`screenshots.json`（上下文注入类无可视产物，市场自动从 README 抽图，README 内无图）
 - **未做**：线上 dsh 未重启（用户指示），`df265f1` 的 `cd` 回答路径文案修复要等下次重启才生效
