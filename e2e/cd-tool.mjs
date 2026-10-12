@@ -16,7 +16,9 @@ const E2E_HOME = process.env.DSH_E2E_HOME || "/root/.dsh-e2e";
 const SESSIONS_ROOT = `${E2E_HOME}/sessions`;
 const STATE_FILE = `${E2E_HOME}/dsh-cd/state.json`;
 const TARGET_DIR = "/tmp/dsh-cd-e2e";
-const MARKER = "dsh-cd-e2e-7f3a";
+// marker 每轮唯一：同一个（可弃的）e2e home 会被反复复用，历史运行留下过同样的 marker，
+// 固定字符串会让轮询在开跑前就锁上上一轮的会话日志。
+const MARKER = `dsh-cd-e2e-7f3a-${Date.now().toString(36)}`;
 const PROMPT =
   `[${MARKER}] Automated e2e test of the cd tool. Execute EXACTLY these five tool calls in order, ` +
   "with EXACTLY these arguments — keep file paths RELATIVE exactly as written (do not turn them into absolute paths), " +
@@ -34,6 +36,9 @@ function check(name, ok, detail = "") {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
 }
 
+/** 会话日志文件名带格式版本（session.v3 / session.v4 …），不写死。 */
+const SESSION_LOG = /^session\.v\d+\.jsonl(\.zstd)?$/;
+
 function listSessionFiles() {
   const out = readdirSync(SESSIONS_ROOT, { withFileTypes: true })
     .filter((d) => d.isDirectory())
@@ -41,7 +46,11 @@ function listSessionFiles() {
       const proj = `${SESSIONS_ROOT}/${d.name}`;
       return readdirSync(proj, { withFileTypes: true })
         .filter((s) => s.isDirectory() && s.name.startsWith("session-"))
-        .map((s) => `${proj}/${s.name}/session.v3.jsonl.zstd`);
+        .flatMap((s) => {
+          const dir = `${proj}/${s.name}`;
+          const log = readdirSync(dir).find((f) => SESSION_LOG.test(f));
+          return log === undefined ? [] : [`${dir}/${log}`];
+        });
     });
   return out.filter(existsSync);
 }
@@ -106,9 +115,9 @@ console.log("prompt sent, waiting for the turn…");
 let sessionFile = null;
 const deadline = Date.now() + 420000;
 // GUI 可能在页面加载时（而非点击 New session 时）就建好空白会话并复用它，
-// 文件新旧不可靠——以 marker 唯一性定位本轮会话。
+// 文件新旧不可靠——以本轮唯一 marker 定位会话。
 while (Date.now() < deadline && sessionFile === null) {
-  // 历史运行也留下过同样的 marker，取其中最近写入的一份
+  // marker 唯一，正常只会命中一份；历史脏日志若出现同一串，取最近写入的那份
   const matches = [];
   for (const f of listSessionFiles()) {
     const log = await readLog(f);
@@ -160,7 +169,10 @@ function callArgs(call) {
 }
 function callResultText(call) {
   const r = resultsByCall.get(call.callId);
-  return (r?.message?.content || []).map((c) => (c.content || []).map((x) => x.text || "").join("")).join("\n");
+  // dsh 0.2（v4 日志）把工具结果存成文本块本身；旧格式还裹一层嵌套 content。
+  return (r?.message?.content || [])
+    .map((block) => block.text ?? (block.content || []).map((inner) => inner.text || "").join(""))
+    .join("\n");
 }
 
 console.log(`session ${sessionId} cwd=${sessionCwd}`);
