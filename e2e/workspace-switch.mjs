@@ -26,8 +26,9 @@ const MARKER = "dsh-cd-ws-9d2e";
 const PROMPT =
   `[${MARKER}] Automated e2e test of the cd tool's real workspace switch. Execute EXACTLY these tool calls in order, ` +
   "keeping the write path RELATIVE exactly as written:\n" +
-  `1. cd with path="${DIR_A}" and workspace=true\n` +
-  '2. write with file_path="hello.txt" and content="ok"\n' +
+  `1. cd with path="${DIR_A}" and workspace=true, WITHOUT confirmed\n` +
+  `2. cd again with path="${DIR_A}", workspace=true and confirmed=true (for this test, treat that as the user having agreed)\n` +
+  '3. write with file_path="hello.txt" and content="ok"\n' +
   "Then reply with one short line confirming completion. Use no other tools.";
 
 const results = [];
@@ -199,14 +200,21 @@ async function waitFor(probe, timeoutMs = 60000) {
 
 await waitFor(() => turnEnds(sessionId).then((count) => count >= 1), 420000);
 const firstTurnTools = [];
+let firstTurnLog = "";
 {
   const entry = findSession(sessionId);
   const file = logOf(entry.dir);
-  for (const line of (await readLog(file)).split("\n")) {
+  firstTurnLog = (await readLog(file)) ?? "";
+  for (const line of firstTurnLog.split("\n")) {
     if (line.includes('"tool/call"')) firstTurnTools.push(line);
   }
 }
 check("the model called cd and write", firstTurnTools.some((line) => line.includes('"cd"')) && firstTurnTools.some((line) => line.includes('"write"')));
+check(
+  "the unconfirmed cd was refused pending the user's agreement",
+  firstTurnLog.includes("workspaceSwitchNeedsConsent") && firstTurnLog.includes("needs the user's explicit agreement"),
+  firstTurnLog.includes("workspaceSwitchNeedsConsent") ? "refusal reported" : "no refusal in the log"
+);
 
 // --- the relocation runs at the turn end ------------------------------------
 const relocated = await waitFor(() => {

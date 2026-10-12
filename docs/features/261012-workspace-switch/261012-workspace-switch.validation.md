@@ -6,7 +6,8 @@
 |---|---|---|
 | 类型检查 | `pnpm check` | 零错误 |
 | 构建 | `pnpm build` | `dist/{index,state,context,relocate,command}.js` |
-| 行为测试 | `npm test`（build + `node --test test/*.test.mjs`） | **7/7 通过** |
+| 行为测试 | `npm test`（build + `node --test test/*.test.mjs`） | **10/10 通过** |
+| 同意闸测试 | 同上（`test/cd-tool.test.mjs`，直接驱动工具定义） | 3/3：不带 `confirmed` 被拒并回报"需要用户明确同意"、后续查询仍提示等待、带 `confirmed` 才排队且清掉 waiting 状态；纯 `cd` 不出现同意/搬迁字样；工作树目标同样不豁免 |
 
 `test/relocate.test.mjs` 覆盖：projectKey / encodeSegment 与磁盘既有目录名一致的 golden 值；压缩多帧日志搬迁后**除第一帧外逐字节不变**且被参考解码器 `zstd -dc` 完整读回；非压缩日志；多世代同时改写；attach 失败时**全量回滚**（内存 header、写入句柄、旧目录、新副本）；目标等于当前目录时 no-op；以及**本机真实 dsh 会话日志**的跨目录往返（帧一 = 补丁后 header 一行、事件逐行等价）。
 
@@ -36,6 +37,7 @@ spike 阶段列出的 5 处宿主内部假设由此全部证实：header 换引�
 
 ## 未覆盖 / 未断言
 
+- **同意闸的 e2e**：`e2e/workspace-switch.mjs` 已改为先不带 `confirmed` 调一次（断言被拒）再带 `confirmed` 调一次，但这次改动后**未重跑**——本机 `dsh-e2e` 两个全局实例槽位都被占用（另一个是 `dsh-manage-session`），起不了隔离实例。同意闸本身已由单元测试覆盖，等槽位空出可随时补跑。
 - **GUI 分组刷新**：搬迁后侧边栏是否需要刷新页面未做断言（命令回执里已提示用户 F5）。e2e 用同一页面继续对话，说明会话本身不需要刷新。
 - **活跃子代理时的延后**：未构造该场景（代码路径为「延到下一次回合结束」）。
 - **持久化的 pending 搬迁**：进程重启后再结算的分支未做行为级断言。

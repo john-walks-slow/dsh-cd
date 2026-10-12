@@ -12,6 +12,8 @@ export interface CwdEntry {
   inherited?: true;
   /** `cd {"workspace": true}` asked for a real relocation: perform it as soon as the session is idle. */
   relocate?: true;
+  /** `cd {"workspace": true}` arrived without `confirmed: true`: the switch waits for the user's explicit agreement. */
+  needsConsent?: true;
   /** Why the last relocation attempt failed; cleared by the next successful switch. */
   relocateError?: string;
 }

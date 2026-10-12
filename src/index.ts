@@ -43,7 +43,12 @@ const CD_PARAMETERS: ParameterSchemaSpec = {
   workspace: {
     type: "boolean",
     description:
-      "Relocate the session to `path` for good instead of only re-basing relative paths: as soon as this turn ends the session belongs to that directory (sandbox root, project instructions, skills, session storage and the sidebar workspace follow, creating the workspace record if the directory has none). Use it when the work is moving there permanently; omit it for a temporary detour."
+      "Relocate the session to `path` for good instead of only re-basing relative paths: as soon as this turn ends the session belongs to that directory — its sandbox root, project instructions (AGENTS.md), skill discovery, session storage and the sidebar workspace all follow, and a workspace record is created if the directory has none. This is a permanent change of the session's identity, so it only takes effect after the user has explicitly agreed: ask them first, then repeat the call with `confirmed: true`. A call without that agreement still re-bases relative paths for now, and reports that the switch is waiting. Omit it for a temporary detour, and also for work inside a git worktree, where a plain path switch is normally what you want."
+  },
+  confirmed: {
+    type: "boolean",
+    description:
+      "Only pass true once the user has explicitly agreed, in this conversation, to moving this session's working directory to `path` for good. It is the record of their agreement, so never set it on your own initiative: the switch is what decides where the session is stored and which sandbox root, project instructions and skills apply to it."
   }
 };
 
@@ -56,6 +61,7 @@ const CWD_VIEW_SCHEMA = {
     previous: { type: "string" },
     sessionWorkspaceRoot: { type: "string" },
     workspaceSwitchQueued: { type: "boolean" },
+    workspaceSwitchNeedsConsent: { type: "boolean" },
     note: { type: "string" }
   }
 } satisfies ValueSchemaSpec;
@@ -108,20 +114,22 @@ async function resolveDirectory(target: string): Promise<string | undefined> {
   return real;
 }
 
-/** The `cd` tool, bound to one state store. */
-function cdToolDefinition(state: CdState, services: () => RelocateServices | undefined): ToolDefinition {
+/** The `cd` tool, bound to one state store. Exported so the consent gate can be tested without a host. */
+export function cdToolDefinition(state: CdState, services: () => RelocateServices | undefined): ToolDefinition {
   return defineTool({
     name: "cd",
     description:
-      "Change this session's working directory. By default this only re-bases relative paths: the file tools (read, write, edit, glob, grep, read_image, present) and the bash tool's default workdir resolve against `path`, while the session keeps its workspace — sandbox policy, project instructions (AGENTS.md), skills and session storage stay where they were. Pass `workspace: true` when the work is moving there for good: this turn still uses the new directory, and the session is relocated for real as soon as the turn ends, so its sandbox root, project instructions, skills, session storage and sidebar workspace all follow. `path` may be absolute, relative to the current working directory, or start with ~; '-' switches back to the previous directory; omit it to show the current working directory.",
+      "Change this session's working directory. By default this only re-bases relative paths: the file tools (read, write, edit, glob, grep, read_image, present) and the bash tool's default workdir resolve against `path`, while the session keeps its workspace — sandbox policy, project instructions (AGENTS.md), skills and session storage stay where they were. Pass `workspace: true` when the work is moving there for good: this turn still uses the new directory, and the session is relocated for real as soon as the turn ends, so its sandbox root, project instructions, skills, session storage and sidebar workspace all follow. A real switch changes the session's identity and therefore needs the user's explicit agreement: ask them, and only then repeat the call with `confirmed: true` — without it the call just re-bases paths and reports that the switch is waiting. `path` may be absolute, relative to the current working directory, or start with ~; '-' switches back to the previous directory; omit it to show the current working directory.",
     parameters: CD_PARAMETERS,
     output: { schema: CWD_VIEW_SCHEMA, render: renderValue },
     presentCall(args: unknown): ToolCallView | undefined {
       const path = (args as { path?: unknown } | null | undefined)?.path;
-      const workspace = (args as { workspace?: unknown } | null | undefined)?.workspace === true;
+      const wants = (args as { workspace?: unknown } | null | undefined)?.workspace === true;
+      const confirmed = (args as { confirmed?: unknown } | null | undefined)?.confirmed === true;
+      const suffix = wants ? (confirmed ? "  (real workspace switch)" : "  (workspace switch awaiting the user's agreement)") : "";
       return {
         card: "generic" as const,
-        title: `cd ${typeof path === "string" ? path : ""}${workspace ? "  (real workspace switch)" : ""}`.trim(),
+        title: `cd ${typeof path === "string" ? path : ""}${suffix}`.trim(),
         kind: "other" as const,
         rawInput: JSON.stringify(args) ?? ""
       };
@@ -135,6 +143,9 @@ function cdToolDefinition(state: CdState, services: () => RelocateServices | und
       const root = sessionCwdOf(agent);
       const requested = (args as { path?: unknown }).path;
       const wantsWorkspace = (args as { workspace?: unknown }).workspace === true;
+      const confirmed = (args as { confirmed?: unknown }).confirmed === true;
+      // A real switch changes the session's identity, so it only runs once the user's agreement is on record.
+      const relocating = wantsWorkspace && confirmed;
 
       if (requested === undefined) {
         const queued = entry?.relocate === true;
@@ -144,11 +155,15 @@ function cdToolDefinition(state: CdState, services: () => RelocateServices | und
           ...(entry?.previous === undefined ? {} : { previous: entry.previous }),
           ...(root === undefined ? {} : { sessionWorkspaceRoot: root }),
           ...(queued ? { workspaceSwitchQueued: true } : {}),
+          ...(entry?.needsConsent === true ? { workspaceSwitchNeedsConsent: true } : {}),
           note:
             entry === undefined
               ? "No override: relative paths resolve against the session workspace root."
               : `Relative paths in the file tools and the bash default workdir resolve against ${entry.cwd}.` +
                 (queued ? ` A real workspace switch to ${entry.cwd} is queued and runs as soon as this turn ends.` : "") +
+                (entry.needsConsent === true
+                  ? ` A real workspace switch to ${entry.cwd} is waiting for the user's agreement: ask them, and only after they agree call cd again with workspace: true and confirmed: true.`
+                  : "") +
                 (entry.relocateError === undefined ? "" : ` The last real workspace switch failed: ${entry.relocateError}`)
         };
       }
@@ -178,7 +193,7 @@ function cdToolDefinition(state: CdState, services: () => RelocateServices | und
         };
       }
 
-      if (wantsWorkspace && services() === undefined) {
+      if (relocating && services() === undefined) {
         throw new Error(
           "cd: a real workspace switch needs the session persistence and workspace registry services, which this dsh build does not expose; use a plain cd or the /cd command."
         );
@@ -189,7 +204,8 @@ function cdToolDefinition(state: CdState, services: () => RelocateServices | und
         cwd: resolved,
         ...(previous === undefined ? {} : { previous }),
         updatedAt: Date.now(),
-        ...(wantsWorkspace ? { relocate: true as const } : {})
+        ...(relocating ? { relocate: true as const } : {}),
+        ...(wantsWorkspace && !confirmed ? { needsConsent: true as const } : {})
       };
       state.live.set(sessionId, next);
       state.persisted.set(sessionId, next);
@@ -200,10 +216,13 @@ function cdToolDefinition(state: CdState, services: () => RelocateServices | und
         override: true,
         ...(next.previous === undefined ? {} : { previous: next.previous }),
         ...(root === undefined ? {} : { sessionWorkspaceRoot: root }),
-        ...(wantsWorkspace ? { workspaceSwitchQueued: true } : {}),
-        note: wantsWorkspace
+        ...(relocating ? { workspaceSwitchQueued: true } : {}),
+        ...(next.needsConsent === true ? { workspaceSwitchNeedsConsent: true } : {}),
+        note: relocating
           ? `Relative paths in the file tools and the bash default workdir now resolve against ${resolved}, and a real workspace switch to it is queued: as soon as this turn ends the session is relocated there for good — its sandbox root, project instructions (AGENTS.md), skill discovery, session storage and sidebar workspace all move with it, and a workspace record is created if that directory has none. Finish anything that depends on the old workspace in this turn; afterwards the override is gone because relative paths and reply paths finally share one base.`
-          : `Relative paths in the file tools and the bash default workdir now resolve against ${resolved}. This session keeps its workspace: sandbox policy, project instructions (AGENTS.md), skills and session storage stay${root === undefined ? "" : ` at ${root}`}, so keep writing reply paths workspace-relative or absolute.`
+          : wantsWorkspace
+            ? `Relative paths in the file tools and the bash default workdir now resolve against ${resolved}, but the session was NOT relocated: a real workspace switch needs the user's explicit agreement first. Ask the user whether this session should move its workspace to ${resolved} for good, and only after they agree call cd again with workspace: true and confirmed: true. Reply paths keep resolving against the session workspace root until then.`
+            : `Relative paths in the file tools and the bash default workdir now resolve against ${resolved}. This session keeps its workspace: sandbox policy, project instructions (AGENTS.md), skills and session storage stay${root === undefined ? "" : ` at ${root}`}, so keep writing reply paths workspace-relative or absolute.`
       };
     }
   });

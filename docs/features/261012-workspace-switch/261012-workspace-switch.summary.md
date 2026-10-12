@@ -13,7 +13,8 @@
 3. **账本**：`detachSession` 旧工作区 → `create(path)` 复用或新建 → `attachSession` 新工作区（attach 会重读磁盘 header 校验，故必须排在磁盘改写之后）。
 4. **时机**：真切搬迁要求会话空闲（无运行中回合、无活跃子代理、写入句柄静止）。用户命令要求空闲即时执行；模型工具调用正在回合中，故采用「**本回合仍用路径基准 + 回合结束（`turn/end`）自动搬迁**」。
 5. **权限**（用户决策）：模型与用户**都可以**新建工作区；代价是 `workspace-write` 沙箱模式下模型可借此把沙箱根指向任意已存在目录（README 已如实写明）。
-6. `session.header` / `tracker` / `config.root` 在 dsh 类型里是 private，插件用窄化结构类型访问并在缺失时报明确错误（不降级）。
+6. **用户同意闸**（2026-10-12 追加）：真切切换改的是会话身份，因此 `workspace: true` 只在同一次调用带 `confirmed: true` 时才排队；不带 `confirmed` 的调用只换基准，并在工具结果与 runtime-context 里回报"等待用户同意、先问用户"。否决审批弹窗路线（Full access 预设 `approval: never` 会确定性拒绝审批请求，默认配置下走不通）。工作树场景不是豁免，而是本来就该传 `false`。
+7. `session.header` / `tracker` / `config.root` 在 dsh 类型里是 private，插件用窄化结构类型访问并在缺失时报明确错误（不降级）。
 
 ## 交付物
 

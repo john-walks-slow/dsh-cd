@@ -39,6 +39,10 @@ export function contextTextFor(state: CdState, sessionId: string, agent: Agent |
     parts.push(
       `A real workspace switch to ${entry.cwd} is queued: as soon as this turn ends the session is relocated there for good — sandbox root, project instructions (AGENTS.md), skill discovery, session storage and the sidebar workspace all follow, and this override stops being needed.`
     );
+  } else if (entry.needsConsent === true) {
+    parts.push(
+      `A real workspace switch to ${entry.cwd} was requested but is NOT scheduled: it changes where this session is stored and which sandbox root, project instructions and skills apply to it, so it needs the user's explicit agreement first. Ask the user, and only after they agree call cd again with workspace: true and confirmed: true.`
+    );
   } else if (root !== undefined) {
     parts.push("The session workspace root still anchors sandbox policy, project instructions (AGENTS.md), skills, and session storage.");
   }

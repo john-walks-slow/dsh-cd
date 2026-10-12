@@ -1,6 +1,6 @@
 {
   "name": "dsh-cd",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Session working-directory override for DeepSeek Harness: a `cd` tool that makes relative paths in the file tools and the bash tool's default workdir follow the new directory, per-session and cache-safe, without moving the session or its workspace root. dsh-cd：给 DSH 补一个会话内原地切换工作目录的 `cd` 工具——文件工具的相对路径与 bash 默认工作目录跟随新目录，按会话隔离、cache 安全，且不改变会话身份与工作区根。",
   "type": "module",
   "main": "./dist/index.js",
