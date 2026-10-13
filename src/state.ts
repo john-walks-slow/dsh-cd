@@ -10,6 +10,12 @@ export interface CwdEntry {
   previous?: string;
   updatedAt: number;
   inherited?: true;
+  /** `cd {"workspace": true}` asked for a real relocation: perform it as soon as the session is idle. */
+  relocate?: true;
+  /** `cd {"workspace": true}` arrived without `confirmed: true`: the switch waits for the user's explicit agreement. */
+  needsConsent?: true;
+  /** Why the last relocation attempt failed; cleared by the next successful switch. */
+  relocateError?: string;
 }
 
 export interface CdState {
@@ -32,12 +38,7 @@ export function createCdState(stateFile: string): CdState {
   return { live: new Map(), persisted, ready, stateFile };
 }
 
-/**
- * Read the durable entries, tolerating a missing or malformed file. Entries are
- * rebuilt field by field, so files written by older versions — which also
- * carried the real-workspace-switch fields `relocate`, `needsConsent` and
- * `relocateError` — load as plain overrides instead of failing.
- */
+/** Read the durable entries, tolerating a missing or malformed file. */
 async function loadPersisted(stateFile: string): Promise<Map<string, CwdEntry>> {
   let raw: string;
   try {
@@ -50,14 +51,10 @@ async function loadPersisted(stateFile: string): Promise<Map<string, CwdEntry>> 
     const entries = new Map<string, CwdEntry>();
     if (parsed !== null && typeof parsed === "object" && Array.isArray((parsed as { entries?: unknown }).entries)) {
       for (const entry of (parsed as { entries: unknown[] }).entries) {
-        if (entry === null || typeof entry !== "object") continue;
-        const { sessionId, cwd, previous, updatedAt } = entry as { sessionId?: unknown; cwd?: unknown; previous?: unknown; updatedAt?: unknown };
-        if (typeof sessionId !== "string" || typeof cwd !== "string") continue;
-        entries.set(sessionId, {
-          cwd,
-          ...(typeof previous === "string" ? { previous } : {}),
-          updatedAt: typeof updatedAt === "number" ? updatedAt : 0
-        });
+        if (entry !== null && typeof entry === "object") {
+          const { sessionId, cwd } = entry as { sessionId?: unknown; cwd?: unknown };
+          if (typeof sessionId === "string" && typeof cwd === "string") entries.set(sessionId, entry as CwdEntry);
+        }
       }
     }
     return entries;
@@ -78,7 +75,8 @@ export async function savePersisted(state: CdState): Promise<void> {
       sessionId,
       ...(entry.previous === undefined ? {} : { previous: entry.previous }),
       cwd: entry.cwd,
-      updatedAt: entry.updatedAt
+      updatedAt: entry.updatedAt,
+      ...(entry.relocate === true ? { relocate: true } : {})
     });
   }
   await mkdir(dirname(state.stateFile), { recursive: true });

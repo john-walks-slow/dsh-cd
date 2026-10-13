@@ -1,7 +1,7 @@
 {
   "name": "dsh-cd",
-  "version": "0.3.0",
-  "description": "Session working-directory override for DeepSeek Harness: a `cd` tool that makes relative paths in the file tools and the bash tool's default workdir follow the new directory, per-session and cache-safe, without moving the session or its workspace root. dsh-cd：给 DSH 补一个会话内原地切换工作目录的 `cd` 工具——文件工具的相对路径与 bash 默认工作目录跟随新目录，按会话隔离、cache 安全，且不改变会话身份与工作区根。真切搬迁（改会话身份/存储/沙箱根）由 dsh-manage-session 的 `session_move` / `/move` 提供。",
+  "version": "0.2.1",
+  "description": "Session working-directory override for DeepSeek Harness: a `cd` tool that makes relative paths in the file tools and the bash tool's default workdir follow the new directory, per-session and cache-safe, without moving the session or its workspace root. dsh-cd：给 DSH 补一个会话内原地切换工作目录的 `cd` 工具——文件工具的相对路径与 bash 默认工作目录跟随新目录，按会话隔离、cache 安全，且不改变会话身份与工作区根。",
   "type": "module",
   "main": "./dist/index.js",
   "exports": {
@@ -23,7 +23,8 @@
     "prepare": "npm run build",
     "prepublishOnly": "npm run check",
     "release": "npm run test && npm version patch && npm pack --pack-destination /tmp",
-    "e2e:cd": "dsh-e2e run e2e/cd-tool.mjs"
+    "e2e:cd": "dsh-e2e run e2e/cd-tool.mjs",
+    "e2e:workspace": "dsh-e2e run e2e/workspace-switch.mjs"
   },
   "dsh": {
     "bundle": {
@@ -38,11 +39,12 @@
     "cd",
     "working-directory",
     "cwd",
+    "directory-switch",
     "relative-path",
-    "path-base",
     "session",
     "shell",
     "工作目录",
+    "切换目录",
     "相对路径",
     "会话目录"
   ],
@@ -66,8 +68,10 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.4",
     "@deepseek-ai/dsh-agent": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-commands": "0.2.0-rc.2",
     "@deepseek-ai/dsh-home-paths": "0.2.0-rc.2",
     "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-session": "0.2.0-rc.2",
     "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
     "@types/node": "^22.20.1",
     "typescript": "^5.9.3"

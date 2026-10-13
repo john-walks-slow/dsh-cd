@@ -7,5 +7,5 @@ url: https://github.com/john-walks-slow/dsh-cd
 name: john-walks-slow/dsh-cd
 category: tools
 description:
-  en: 'In-session cd for DeepSeek Harness: re-base relative paths on the fly — the file tools (read/write/edit/glob/grep/read_image/present) and the bash/pwsh default workdir follow the new directory, `-` returns to the previous one and cd-ing back to the session workspace root clears it. Per-session, persisted across restarts, sandbox-cache-safe, and the session''s identity, storage, sandbox root and workspace membership stay where they are. (Real workspace moves live in dsh-manage-session.)'
-  zh: '会话内 cd：即时切换相对路径基准——文件工具（read/write/edit/glob/grep/read_image/present）与 bash / pwsh 默认工作目录跟随新目录，`-` 回到上一个目录，cd 回会话工作区根即清除覆盖。按会话隔离、跨重启恢复、对 cache 安全，会话身份、存储位置、沙箱根与工作区归属始终原地不动。（真切搬迁已迁至 dsh-manage-session。）'
+  en: 'In-session cd for DeepSeek Harness: re-base relative paths on the fly (the file tools and the bash/pwsh default workdir follow) or move the session to another workspace for real — a `cd {"workspace": true, "confirmed": true}` call the user has agreed to, or the user''s own `/cd <directory>` command, relocates the session''s stored log, sandbox root, AGENTS.md and skill discovery and sidebar grouping. Per-session, persisted across restarts, without moving the session for a plain re-base.'
+  zh: '会话内 cd：即时切换相对路径基准（文件工具与 bash / pwsh 默认工作目录跟随），或把会话真正搬到另一个工作区——经用户同意的 `cd {"workspace": true, "confirmed": true}` 或用户自己的 `/cd <目录>` 命令，会迁移会话日志存储位置、沙箱根、AGENTS.md 与 skills 发现根以及侧边栏分组；按会话隔离、跨重启恢复，单纯换基准时不动会话身份。'
