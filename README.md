@@ -147,3 +147,7 @@ git push --follow-tags
 ## License
 
 MIT
+
+## 社区
+
+- 感谢 [LINUX DO](https://linux.do/) 社区提供的交流环境。
